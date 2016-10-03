@@ -83,6 +83,7 @@ int main(void) {
 		free(dist);
 		free(pred);
 	}
+	MPI_Finalize();
 	return 0;
 }
 
