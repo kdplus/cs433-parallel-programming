@@ -12,7 +12,7 @@ void Print_matrix(int mat[], int n);
 void Print_dists(int dist[], int n);
 void Print_paths(int pred[], int n);
 int  Find_min_dist(int dist[], int known[], int n);
-void Dijkstra(int mat[], int dist[], int pred[], int n, int my_rank, int N);
+void Dijkstra_Para(int loc_mat[], int loc_dist[], int loc_pred[], int loc_n, int my_rank, int N);
 
 int main(void) {
 	char greeting[MAX_STRING];
@@ -34,15 +34,15 @@ int main(void) {
 		sprintf(greeting, "Greetings from process %d of %d!", my_rank, comm_sz);
 		MPI_Send(greeting, strlen(greeting) + 1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
 	*/
-		MPI_Recv(&n, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);	
-		loc_n = n/comm_sz;
+		MPI_Recv(&n, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);	// Receive the size of matrix from process 0
+		loc_n = n/comm_sz;	// Divide computation into comm_sz parts
 		loc_mat = malloc(n*n/loc_n*sizeof(int));
 		loc_dist = malloc(n/loc_n*sizeof(int));
 		loc_pred = malloc(n/loc_n*sizeof(int));
-		MPI_Scatter(mat, loc_n*n, MPI_INT, loc_mat, loc_n*n, MPI_INT, 0, MPI_COMM_WORLD);
-		Dijkstra(loc_mat, loc_dist, loc_pred, loc_n, my_rank, n);
-		MPI_Gather(loc_dist, loc_n, MPI_INT, dist, loc_n, MPI_INT, 0, MPI_COMM_WORLD);
-		MPI_Gather(loc_pred, loc_n, MPI_INT, pred, loc_n, MPI_INT, 0, MPI_COMM_WORLD);
+		MPI_Scatter(mat, loc_n*n, MPI_INT, loc_mat, loc_n*n, MPI_INT, 0, MPI_COMM_WORLD);	// Scatter matrix mat whose size is loc_n * n
+		Dijkstra_Para(loc_mat, loc_dist, loc_pred, loc_n, my_rank, n); 
+		MPI_Gather(loc_dist, loc_n, MPI_INT, dist, loc_n, MPI_INT, 0, MPI_COMM_WORLD); // Form the complete dist
+		MPI_Gather(loc_pred, loc_n, MPI_INT, pred, loc_n, MPI_INT, 0, MPI_COMM_WORLD); // Form the complete pred
 	} else {
 	/*	
 		printf("Greetings from process %d of %d!\n", my_rank, comm_sz);
@@ -51,7 +51,6 @@ int main(void) {
 			printf("%s\n", greeting);
 		}
 	*/	
-
 		printf("How many vertices?\n");
 		scanf("%d", &n);
 		for(int i = 1; i < comm_sz; ++i )
@@ -68,13 +67,13 @@ int main(void) {
 		Read_matrix(mat, n);
 
 		MPI_Scatter(mat, loc_n*n, MPI_INT, loc_mat, loc_n*n, MPI_INT, 0,
-				MPI_COMM_WORLD);
-		Dijkstra(loc_mat, loc_dist, loc_pred, loc_n, my_rank, n);
+				MPI_COMM_WORLD); // Scatter matrix mat whose size is loc_n * n
+		Dijkstra_Para(loc_mat, loc_dist, loc_pred, loc_n, my_rank, n);
 
 		MPI_Gather(loc_dist, loc_n, MPI_INT, dist, loc_n, MPI_INT, 0,
-				MPI_COMM_WORLD);
+				MPI_COMM_WORLD);  // Form the complete dist
 		MPI_Gather(loc_pred, loc_n, MPI_INT, pred, loc_n, MPI_INT, 0,
-				MPI_COMM_WORLD);
+				MPI_COMM_WORLD);  // Form the complete pred
 		printf("The distance from 0 to each vertex is:\n");
 		Print_dists(dist, n);
 		printf("The shortest path from 0 to each vertex is:\n");
@@ -123,68 +122,68 @@ void Print_matrix(int mat[], int n) {
 }  /* Print_matrix */
 
 /*-------------------------------------------------------------------
- * Function:    Dijkstra
- * Purpose:     Apply Dijkstra's algorithm to the matrix mat
- * In args:     n:  the number of vertices
- *              mat:  adjacency matrix for the graph
- * Out args:    dist:  dist[v] = distance 0 to v.
- *              pred:  pred[v] = predecessor of v on a 
+ * Function:    Dijkstra_Para
+ * Purpose:     Apply Dijkstra_Para's algorithm to the matrix loc_mat
+ * In args:     loc_n:  the number of vertices
+ *              loc_mat:  adjacency matrix for the graph
+ * Out args:    loc_dist:  loc_dist[v] = distance 0 to v.
+ *              loc_pred:  loc_pred[v] = predecessor of v on a 
  *                  shortest path 0->v.
  */
-void Dijkstra(int mat[], int dist[], int pred[], int n, int my_rank, int N) {
-	int i, u, v, *known, new_dist;
+void Dijkstra_Para(int loc_mat[], int loc_dist[], int loc_pred[], int loc_n, int my_rank, int N) {
+	int i, loc_u, v, *known, new_dist;
 	int my_min[2], glbl_min[2];
 	/* known[v] = true, if the shortest path 0->v is known */
 	/* known[v] = false, otherwise                         */
-	known = malloc(n*sizeof(int));
+	known = malloc(loc_n*sizeof(int));
 	/* Initialize d and p */
-	dist[0] = 0; pred[0] = 0; known[0] = 1; 
-	for (v = 0; v < n; v++) {
-		dist[v] = mat[0 + v*N];
-		pred[v] = 0;
+	loc_dist[0] = 0; loc_pred[0] = 0; known[0] = 1; 
+	for (v = 0; v < loc_n; v++) { // In paralleliztion, v should start from 0, not 1
+		loc_dist[v] = loc_mat[0 + v*N];
+		loc_pred[v] = 0;
 		known[v] = 0;
 	}
 
 #     ifdef DEBUG
 	  printf("i = 0\n");
-	  Print_dists(dist, n);
+	  Print_dists(loc_dist, loc_n);
 #     endif
 
 	/* On each pass find an additional vertex */
 	/* whose distance to 0 is known           */
-	for (i = 1; i < n; i++) {
-	  	u = Find_min_dist(dist, known, n);
-		int global_u = u + my_rank * n;	
-		my_min[0] = dist[u];
-		my_min[1] = global_u;
+	for (i = 1; i < loc_n; i++) {
+	  	loc_u = Find_min_dist(loc_dist, known, loc_n);
+		int global_u = loc_u + my_rank * loc_n;	// Find global vertex number
+		my_min[0] = loc_dist[loc_u]; // Distance from 0 to loc_u
+		my_min[1] = global_u; // Store global vertex number
 		
 		MPI_Allreduce(my_min, glbl_min, 1, MPI_2INT, MPI_MINLOC,
-				MPI_COMM_WORLD);
-	  	if (global_u == glbl_min[1]) known[u] = 1;
+				MPI_COMM_WORLD); // glbl_min[0]: current global minimum dist, glbl_min[1]: global vertex number of this chosen vertex
+	  	if (global_u == glbl_min[1]) known[loc_u] = 1; // Analyze whether the chosen vertex is in this process
 
-		for (v = 0; v < n; v++) 
+		for (v = 0; v < loc_n; v++) 
 			if (!known[v]) {
-				new_dist = glbl_min[0] + mat[glbl_min[1] + v*N];
+				new_dist = glbl_min[0] + loc_mat[glbl_min[1] + v*N]; // u + v * N
 			/*
 				printf("________________________\n");
 				printf("%d\n", glbl_min[1]);
-				printf("%d----%d\n", dist[glbl_min[1]], mat[glbl_min[1]*n+v]);
+				printf("%d----%d\n", loc_dist[glbl_min[1]], loc_mat[glbl_min[1]*n+v]);
 				printf("________________________\n");
 			*/
-				if (new_dist < dist[v]) {
-					dist[v] = new_dist;
-					pred[v] = glbl_min[1];
+				if (new_dist < loc_dist[v]) {
+					loc_dist[v] = new_dist;
+					loc_pred[v] = glbl_min[1];
 				}
 			}
 
 #     ifdef DEBUG
 	  printf("i = %d\n", i);
-	  Print_dists(dist, n);
+	  Print_dists(loc_dist, loc_n);
 #     endif
 	} /* for i */
 
 	free(known);
-}  /* Dijkstra */
+}  /* Dijkstra_Para */
 
 /*-------------------------------------------------------------------
  * Function:    Find_min_dist
