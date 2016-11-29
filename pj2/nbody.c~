@@ -16,6 +16,7 @@
 
 #define WIDTH 1024
 #define HEIGHT 768
+#define THETA 0.005
 
 // default number of bodies
 #define DEF_NUM_BODIES 200
@@ -48,6 +49,7 @@ struct Quad {
 	double x, y;
 	double xlen, ylen;
 };
+
 
 void initQ(struct Quad *q, double a, double b, double c, double d){
 	q->x = a;
@@ -148,6 +150,43 @@ struct world {
     int num_bodies;
 };
 
+double max(double x, double y){if (x < y) return y; return x;}
+
+void ooforce(struct body a, struct body b, double *fx, double *fy);
+
+void computeForce(struct body b, struct BHTree *tree, double *fx, double *fy) {
+	double s = max(tree->quad.xlen, tree->quad.ylen);
+	double d = sqrt(pow(tree->body.x-b.x,2) + pow(tree->body.y-b.y,2));
+	bool isleaf = tree->NW == NULL && tree->NE == NULL && tree->SW == NULL &&
+		tree->SE == NULL;
+	if (isleaf && tree->body.x == b.x && tree->body.y == b.y) {
+		// same body
+	} else if (s / d < THETA || isleaf){
+		ooforce(b, tree->body, fx, fy);
+	} else {
+		if (tree->SE != NULL) computeForce(b, tree->SE, fx, fy);
+		if (tree->NW != NULL) computeForce(b, tree->NW, fx, fy);
+		if (tree->NE != NULL) computeForce(b, tree->NE, fx, fy);
+		if (tree->SW != NULL) computeForce(b, tree->SW, fx, fy);
+	}
+}
+
+void ooforce(struct body a, struct body b, double *fx, double *fy) {
+	// Compute the x and y distances and total distance d between
+	// bodies i and j
+	double diff_x = b.x - a.x;
+	double diff_y = b.y - a.y;
+	double d = sqrt((diff_x * diff_x) + (diff_y * diff_y));
+
+	if (d < 25) {
+		d = 25;
+	}
+	double d_cubed = d * d * d;
+	// Add force due to j to total force on i
+	*(fx) += GRAV * (a.m * b.m / d_cubed) * diff_x;
+	*(fy) += GRAV * (a.m * b.m / d_cubed) * diff_y;
+}
+
 clock_t total_time = 0;
 //total_time.sec = 0;
 //total_time.usec = 0;
@@ -185,13 +224,6 @@ struct world* create_world(int num_bodies) {
     }
 
 	
-	struct Quad *q = malloc(sizeof(struct Quad));
-	initQ(q, 0, 0, WIDTH, HEIGHT);
-	world->tree = malloc(sizeof(struct BHTree));
-	initB(world->tree, *q);
-	for (i = 0; i < world->num_bodies; ++i){
-		insert(world->tree, world->bodies[i]);
-	}
     return world;
 }
 
@@ -276,8 +308,16 @@ void position_step(struct world *world, double time_res) {
     force_x = memset(force_x, 0, sizeof(double) * world->num_bodies);
 	force_y = memset(force_y, 0, sizeof(double) * world->num_bodies);
 
+	struct Quad *q = malloc(sizeof(struct Quad));
+	initQ(q, 0, 0, WIDTH, HEIGHT);
+	world->tree = malloc(sizeof(struct BHTree));
+	initB(world->tree, *q);
+	for (i = 0; i < world->num_bodies; ++i){
+		insert(world->tree, world->bodies[i]);
+	}
     /* Compute the net force on each body */
-    for (i = 0; i < world->num_bodies; i++) {
+    /*
+	for (i = 0; i < world->num_bodies; i++) {
         for (j = 0; j < world->num_bodies; j++) {
             if (i == j) {
                 continue;
@@ -298,7 +338,11 @@ void position_step(struct world *world, double time_res) {
             force_y[i] += GRAV * (world->bodies[i].m * world->bodies[j].m
                     / d_cubed) * diff_y;
         }
-    }
+    }*/
+
+	for (i = 0; i < world->num_bodies; ++i) {
+		computeForce(world->bodies[i], world->tree, &force_x[i], &force_y[i]);
+	}
 
     // Update the velocity and position of each body
 	
