@@ -12,9 +12,11 @@
 #include <stdio.h>
 #include <X11/Xlib.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #define WIDTH 1024
 #define HEIGHT 768
+#define THETA 0.05
 
 // default number of bodies
 #define DEF_NUM_BODIES 200
@@ -42,10 +44,148 @@ struct body {
     double r; // radius of the particle
 };
 
+
+struct Quad {
+	double x, y;
+	double xlen, ylen;
+};
+
+
+void initQ(struct Quad *q, double a, double b, double c, double d){
+	q->x = a;
+	q->y = b;
+	q->xlen = c;
+	q->ylen = d;
+};
+
+bool contains(struct Quad *q, double a, double b) {
+	if (a >= q->x && b >= q->y && a < q->x + q->xlen && b < q->y + q->ylen) return true;
+	return false;
+}
+
+
+struct BHTree {
+	struct body body;
+	struct Quad quad;
+	struct BHTree *NW;
+	struct BHTree *NE;
+	struct BHTree *SW;
+	struct BHTree *SE;
+};
+
+void initB (struct BHTree *p, struct Quad q){
+	p->body.x = p->body.y = 0;
+	p->body.vx = p->body.vy = 0;
+	p->body.m = p->body.r = 0;
+	p->quad = q;
+	p->NE = p->NW = p->SW = p->SE = NULL;
+}
+
+void insert_to_child(struct BHTree *p, struct body b);
+
+void insert(struct BHTree *p, struct body b) {
+	//printf("%f\n", b.x);
+	struct body a = p->body;
+	p->body.m += b.m;
+	p->body.x = (p->body.x + b.x * b.m) / p->body.m;
+	p->body.y = (p->body.y + b.y * b.m) / p->body.m;
+	if (a.m == 0) {
+	} else if (!(p->NW == NULL && p->NE == NULL && p->SW == NULL & p->SE == NULL)) {
+		insert_to_child(p, b);
+	} else {
+		insert_to_child(p, a);
+		insert_to_child(p, b);
+	}
+}
+
+void insert_to_child(struct BHTree *p, struct body b){
+	struct Quad *q = malloc(sizeof(struct Quad));
+	if (b.x < p->quad.x + p->quad.xlen / 2) {
+		if(b.y < p->quad.y + p->quad.ylen / 2) {
+			if(p->SW == NULL) {
+				p->SW = malloc(sizeof(struct BHTree));
+				initQ(q, p->quad.x, p->quad.y, p->quad.xlen/2,
+						p->quad.ylen/2); 
+				initB(p->SW, *q);
+			}
+			insert(p->SW, b);
+		} else {
+			if(p->NW == NULL) {
+				p->NW = malloc(sizeof(struct BHTree));
+				initQ(q, p->quad.x, p->quad.y + p->quad.ylen/2, p->quad.xlen/2,
+						p->quad.ylen/2); 
+				initB(p->NW, *q);
+			}
+			insert(p->NW, b);
+		}
+	} else {
+		if(b.y < p->quad.y + p->quad.ylen / 2) {
+			if(p->SE == NULL) {
+				p->SE = malloc(sizeof(struct BHTree));
+				initQ(q, p->quad.x+p->quad.xlen/2, p->quad.y, p->quad.xlen/2,
+						p->quad.ylen/2); 
+				initB(p->SE, *q);
+			}
+			insert(p->SE, b);
+		} else {
+			if(p->NE == NULL) {
+				p->NE = malloc(sizeof(struct BHTree));
+				initQ(q, p->quad.x + p->quad.xlen/2, p->quad.y + p->quad.ylen/2, p->quad.xlen/2,
+						p->quad.ylen/2); 
+				initB(p->NE, *q);
+			}
+			/*printf("m is %f\n", b.m);
+			printf("x, y is %f %f\n", b.x, b.y);
+			printf("Select NE\n");
+			*/
+			insert(p->NE, b);
+		}
+	}
+	free(q);
+}
+
 struct world {
     struct body *bodies;
+	struct BHTree *tree;
     int num_bodies;
 };
+
+double max(double x, double y){if (x < y) return y; return x;}
+
+void ooforce(struct body a, struct body b, double *fx, double *fy);
+
+void computeForce(struct body b, struct BHTree *tree, double *fx, double *fy) {
+	double s = max(tree->quad.xlen, tree->quad.ylen);
+	double d = sqrt(pow(tree->body.x-b.x,2) + pow(tree->body.y-b.y,2));
+	bool isleaf = tree->NW == NULL && tree->NE == NULL && tree->SW == NULL &&
+		tree->SE == NULL;
+	if (isleaf && tree->body.x == b.x && tree->body.y == b.y) {
+		// same body
+	} else if (s / d < THETA || isleaf){
+		ooforce(b, tree->body, fx, fy);
+	} else {
+		if (tree->SE != NULL) computeForce(b, tree->SE, fx, fy);
+		if (tree->NW != NULL) computeForce(b, tree->NW, fx, fy);
+		if (tree->NE != NULL) computeForce(b, tree->NE, fx, fy);
+		if (tree->SW != NULL) computeForce(b, tree->SW, fx, fy);
+	}
+}
+
+void ooforce(struct body a, struct body b, double *fx, double *fy) {
+	// Compute the x and y distances and total distance d between
+	// bodies i and j
+	double diff_x = b.x - a.x;
+	double diff_y = b.y - a.y;
+	double d = sqrt((diff_x * diff_x) + (diff_y * diff_y));
+
+	if (d < 25) {
+		d = 25;
+	}
+	double d_cubed = d * d * d;
+	// Add force due to j to total force on i
+	*(fx) += GRAV * (a.m * b.m / d_cubed) * diff_x;
+	*(fy) += GRAV * (a.m * b.m / d_cubed) * diff_y;
+}
 
 clock_t total_time = 0;
 //total_time.sec = 0;
@@ -82,6 +222,8 @@ struct world* create_world(int num_bodies) {
             i++;
         }
     }
+
+	
     return world;
 }
 
@@ -166,8 +308,16 @@ void position_step(struct world *world, double time_res) {
     force_x = memset(force_x, 0, sizeof(double) * world->num_bodies);
 	force_y = memset(force_y, 0, sizeof(double) * world->num_bodies);
 
+	struct Quad *q = malloc(sizeof(struct Quad));
+	initQ(q, 0, 0, WIDTH, HEIGHT);
+	world->tree = malloc(sizeof(struct BHTree));
+	initB(world->tree, *q);
+	for (i = 0; i < world->num_bodies; ++i){
+		insert(world->tree, world->bodies[i]);
+	}
     /* Compute the net force on each body */
-    for (i = 0; i < world->num_bodies; i++) {
+    /*
+	for (i = 0; i < world->num_bodies; i++) {
         for (j = 0; j < world->num_bodies; j++) {
             if (i == j) {
                 continue;
@@ -188,7 +338,11 @@ void position_step(struct world *world, double time_res) {
             force_y[i] += GRAV * (world->bodies[i].m * world->bodies[j].m
                     / d_cubed) * diff_y;
         }
-    }
+    }*/
+
+	for (i = 0; i < world->num_bodies; ++i) {
+		computeForce(world->bodies[i], world->tree, &force_x[i], &force_y[i]);
+	}
 
     // Update the velocity and position of each body
 	
@@ -230,7 +384,7 @@ int main(int argc, char **argv) {
     time(&cur_time);
     srand48((long)cur_time); // seed the RNG used in create_world
     struct world *world = create_world(num_bodies);
-
+printf("here test");
     /* set up graphics using Xlib */
 #if NOT_RUN_ON_PI
     Display *disp = XOpenDisplay(NULL);
