@@ -31,7 +31,7 @@
 // coefficient of restitution determines the elasticity of a collision: C_REST = [0,1]
 //  if C_REST = 0 -> perfectly inelastic (particles stick together)
 //  if C_REST = 1 -> perfectly elastic (no loss of speed)
-#define C_REST 0.5
+#define C_REST 0.01
 // set the iteration times
 #define iteration_times 10000
 // Must set 0 if run on Pi

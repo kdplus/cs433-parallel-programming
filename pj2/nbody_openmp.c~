@@ -174,7 +174,6 @@ void position_step(struct world *world, double time_res, int thread_count) {
 		int local_index = local_bodies*my_rank;
 		int k;
 		int i;
-		int j;
 		double d, d_cubed;
 		/* Compute the net force on each body */
 		for (k = 0; k < local_bodies; ++k) {
